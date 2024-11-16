@@ -156,3 +156,37 @@ This can happen if you run docker first and then run locally. The docker daemon 
 On Linux/Macos you can change the folder ownership with `sudo chown -R $USER:$USER output`.
 - **ERROR: Pool overlaps with other one on this address space***
 There already exists a docker network with the same network space. Try removing a docker network using `docker network rm [network_name]` or change the address space in the file `docker-compose.template.yml`
+
+## Changes
+
+### Initial Implementation of Assignment 1 - Section A
+
+I have implemented the initial version for Section A of Assignment 1. Running the `run_dolev.sh` script will create 10 Docker containers simulating a 3-connected network topology (the one depicted in the assignment). The network topology is defined in the `topologies/default.yaml` file. Another topology file (`dolev2.yaml`) represents a fully connected network of 4 nodes for testing purposes, but it is not used in the current implementation.
+
+### Network Behavior and Algorithm
+
+The network uses the **Dolev algorithm**, implemented in the `implementation` folder. This algorithm simulates a network where three nodes (`0`, `4`, and `7`) simultaneously start broadcasting messages (as required by the assignment). To simulate a real-world network scenario, random delays are introduced before sending messages (also a requirement of the assignment).
+
+### Byzantine Node Simulation
+
+Additionally, the algorithm includes a **Byzantine node simulation** (Node `6`) that can exhibit two different behaviors:
+1. **Ignore all messages** to simulate a crash.
+2. **Modify the content** of the received messages.
+
+The Byzantine behavior can be toggled by commenting or uncommenting specific parts of the code.
+
+### Key Features of the Algorithm
+
+1. **Message Table**:
+   Each node (an instance of the `DolevAlgorithm` class) maintains a table that tracks:
+   - Messages (with source ID and content).
+   - Associated paths for each message.
+   - Whether the message has been delivered (authenticated) at that node.
+
+2. **Message Delivery Guarantee**:
+   The algorithm ensures that, even with a Byzantine node present, a message broadcasted by a correct node is delivered to all correct nodes (i.e., all nodes except the Byzantine one).
+
+3. **Execution Termination**:
+   A node stops execution when it does not receive any new messages for 5 seconds. This ensures the execution terminates gracefully, and log outputs are saved to the `output` folder.
+
+Even if the Byzantine node modifies messages or exhibits undesired behaviors, it cannot prevent correct messages from being delivered to all correct nodes. This behavior aligns with the guarantees provided by the **Dolev algorithm**.
