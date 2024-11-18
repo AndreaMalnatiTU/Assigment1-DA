@@ -42,8 +42,9 @@ class DolevAlgorithm(DistributedAlgorithm):
 
     async def on_start(self):
         # Called when the node starts
-        if self.node_id in [0, 4, 7]:  # Nodes 0, 4, and 7 act as simultaneous senders
-            await self.broadcast_message(f"Hello from Node {self.node_id}")
+        if self.node_id in [0, 3]:  # Nodes 0, 3, and 7 act as simultaneous senders
+            await self.broadcast_message(f"Ciao ragazzi {self.node_id}")
+            await self.broadcast_message(f"Mammt {self.node_id}")
         self.reset_timer()  # Initialize the timer
 
     async def broadcast_message(self, content: str):
@@ -69,72 +70,101 @@ class DolevAlgorithm(DistributedAlgorithm):
 
     @message_wrapper(DolevMessage)
     async def on_receive(self, peer: Peer, payload: DolevMessage):
-        # Handles receiving a message
-        if self.node_id == 6:  # Byzantine node 6 ignores all messages
-            #self.append_output(f"[Node {self.node_id}] Ignoring message '{payload.content}' (Byzantine behavior)")
-            #return
-            payload.content = "Corrupted message"  # Corrupt the message content
-        self.reset_timer()  # Reset the inactivity timer
+        """
+        Handle received messages:
+        1. Add the new path to the message record.
+        2. Check if there are f+1 disjoint paths.
+        3. Deliver the message if the condition is satisfied.
+        4. Always forward the message.
+            """
+        self.reset_timer()
 
+        if self.node_id == 6:
+            payload.content = "corrupted message"
+            payload.source = 34
+
+        # Construct the message ID and new path
         message_id = (payload.source, payload.content)
         sender_id = self.node_id_from_peer(peer)
-
-        self.append_output(f"[Node {self.node_id}] Received message '{payload.content}' from Node {sender_id}. Path: {payload.path}")
-
-        # Discard messages with cycles
-        if self.node_id in payload.path:
-            self.append_output(f"[Node {self.node_id}] Discarded message '{payload.content}' due to cycle in path: {payload.path}")
-            return
-        
-        # Check for internal cycles within the path
-        if len(set(payload.path)) < len(payload.path):  # Duplicate nodes indicate a cycle
-            self.append_output(f"[Node {self.node_id}] Discarded message '{payload.content}' due to internal cycle in path: {payload.path}")
-            return
-
-        # Initialize message state if not present
-        if message_id not in self.messages:
-            self.messages[message_id] = {"delivered": False, "paths": set()}
-            self.append_output(f"[Node {self.node_id}] Initialized state for message '{payload.content}' from source {payload.source}")
-
-        # Construct the new path
         new_path = tuple(payload.path + [sender_id])
 
-        # Check disjointness of paths, ignoring source and destination
-        def exclude_source_dest(path):
-            return path[1:-1] if len(path) > 2 else []
+        self.append_output(f"[DEBUG] [Node {self.node_id}] Received message: Source={payload.source}, "
+                           f"Content='{payload.content}', Path={payload.path}, Sender={sender_id}")
 
-        if not all(self.are_disjoint(exclude_source_dest(new_path), exclude_source_dest(existing_path))
-                   for existing_path in self.messages[message_id]["paths"]):
-            self.forward_message(payload, new_path)
+        # **VALIDATION**
+        if not self.is_valid_message(new_path):
             return
 
-        # Add the new path if valid
-        self.messages[message_id]["paths"].add(new_path)
-        self.append_output(f"[Node {self.node_id}] Added path: {new_path} for message '{payload.content}'")
+        # **MESSAGE MANAGEMENT**
+        if message_id not in self.messages:
+            self.messages[message_id] = {"delivered": False, "paths": set()}
 
-        # Deliver the message if f+1 disjoint paths are received
-        if len(self.messages[message_id]["paths"]) >= self.f + 1 and not self.messages[message_id]["delivered"]:
+        # Add the new path and check for disjoint paths
+        if self.add_and_check_disjoint_paths(message_id, new_path) and not self.messages[message_id]["delivered"]:
             self.deliver_content(message_id)
 
-        # Forward the message to neighbors
+        # **FORWARDING**
         self.forward_message(payload, new_path)
 
+
+    def is_valid_message(self, path: Tuple[int]) -> bool:
+        """
+        Validates the message path
+        """
+        if len(path) != len(set(path)):  # Check for cycles
+            self.append_output(f"[DEBUG] [Node {self.node_id}] Invalid path: Cycles detected in path {path}")
+            return False
+        return True
+
+    def add_and_check_disjoint_paths(self, message_id: Tuple[int, str], new_path: Tuple[int]) -> bool:
+        """
+        Add a new path and check if it forms f+1 disjoint paths with existing paths for the message.
+        """
+        # Retrieve existing paths for the message
+        existing_paths = self.messages[message_id]["paths"]
+    
+        # Prepare function to exclude source and sender
+        def exclude_source_dest(path: Tuple[int]) -> List[int]:
+            return list(path[1:])  # Exclude the first element (source) and keep the rest
+
+        # Compare new path with all existing paths
+        disjoint_count = 1
+        for existing_path in existing_paths:
+            if self.are_disjoint(exclude_source_dest(new_path), exclude_source_dest(existing_path)):
+                disjoint_count += 1
+
+        # Stop early if we already have f+1 disjoint paths
+        if disjoint_count >= self.f + 1:
+            return True
+
+        # If no early exit, add the path to the set
+        existing_paths.add(new_path)
+        return False
+
+
     def forward_message(self, payload: DolevMessage, new_path: Tuple[int]):
-        # Forwards the message to neighbors not in the path
+        """
+        Always forward the message to neighbors not in the current path.
+        """
         for neighbor in self.get_peers():
             neighbor_id = self.node_id_from_peer(neighbor)
             if neighbor_id not in new_path:
                 asyncio.create_task(self.send_with_delay(neighbor, DolevMessage(payload.source, payload.content, list(new_path))))
 
     def deliver_content(self, message_id: Tuple[int, str]):
-        # Delivers the message to the application
-        if self.messages[message_id]["delivered"]: 
-            return
-        self.messages[message_id]["delivered"] = True 
+        """
+        Mark the message as delivered and log the action.
+        """
+        self.messages[message_id]["delivered"] = True
         source, content = message_id
-        self.append_output(f"[Node {self.node_id}] Delivered message '{content}' from source {source}.")
+        self.append_output(f"[DEBUG] [Node {self.node_id}] Delivered message '{content}' from source {source} "
+                           f"with paths={self.messages[message_id]['paths']}")
         print(f"[Node {self.node_id}] Delivered message '{content}' from source {source}.")
 
     def are_disjoint(self, path1: List[int], path2: List[int]) -> bool:
-        # Checks if two paths are disjoint
-        return not (set(path1) & set(path2))
+        """
+        Check if two paths are disjoint.
+        """
+        overlap = set(path1) & set(path2)
+        return len(overlap) == 0
+
