@@ -13,13 +13,17 @@ class DolevMessage:
     path: List[int]    # The sequence of nodes the message has traversed
 
 class DolevAlgorithm(DistributedAlgorithm): 
-    def __init__(self, settings: CommunitySettings, f=1, timeout=5) -> None:
+    def __init__(self, settings: CommunitySettings, timeout=5) -> None:
         super().__init__(settings)
         self.messages: Dict[Tuple[int, str], Dict[str, any]] = {}  # Tracks message states and paths
-        self.f = f  # Byzantine fault tolerance parameter
         self.timeout = timeout  # Timeout for node inactivity
         self.timer_task = None  # Reference to the timer task
         self.add_message_handler(DolevMessage, self.on_receive)
+        #print(f"{settings.__dict__.get('byzantine_nodes')}")
+        self.byzantine_nodes = settings.__dict__.get("byzantine_nodes", [])  # List of byzantine nodes
+        print(f"Byzantine nodes: {self.byzantine_nodes}")
+        self.f = len(self.byzantine_nodes)  # Number of byzantine nodes
+
 
     async def start_timer(self):
         # Starts or restarts the inactivity timer
@@ -42,9 +46,8 @@ class DolevAlgorithm(DistributedAlgorithm):
 
     async def on_start(self):
         # Called when the node starts
-        if self.node_id in [0, 3]:  # Nodes 0, 3, and 7 act as simultaneous senders
-            await self.broadcast_message(f"Ciao ragazzi {self.node_id}")
-            await self.broadcast_message(f"Mammt {self.node_id}")
+        if self.node_id in [0]:  # Nodes 0, 3, and 7 act as simultaneous senders
+            await self.broadcast_message(f"Hello From {self.node_id}")
         self.reset_timer()  # Initialize the timer
 
     async def broadcast_message(self, content: str):
@@ -92,7 +95,7 @@ class DolevAlgorithm(DistributedAlgorithm):
                            f"Content='{payload.content}', Path={payload.path}, Sender={sender_id}")
 
         # **VALIDATION**
-        if not self.is_valid_message(new_path):
+        if not self.is_valid_message(new_path, message_id):
             return
 
         # **MESSAGE MANAGEMENT**
@@ -107,13 +110,20 @@ class DolevAlgorithm(DistributedAlgorithm):
         self.forward_message(payload, new_path)
 
 
-    def is_valid_message(self, path: Tuple[int]) -> bool:
+    def is_valid_message(self, path: Tuple[int], message_id: Tuple[int, str]) -> bool:
         """
         Validates the message path
         """
         if len(path) != len(set(path)):  # Check for cycles
             self.append_output(f"[DEBUG] [Node {self.node_id}] Invalid path: Cycles detected in path {path}")
             return False
+        
+        # Controlla se la sorgente del messaggio è il primo elemento del percorso
+        expected_source = message_id[0]  # La sorgente specificata nel messaggio
+        if path[0] != expected_source:
+            self.append_output(f"[DEBUG] [Node {self.node_id}] Invalid path: Source {expected_source} is not the first element in path {path}")
+            return False
+        
         return True
 
     def add_and_check_disjoint_paths(self, message_id: Tuple[int, str], new_path: Tuple[int]) -> bool:
@@ -122,15 +132,11 @@ class DolevAlgorithm(DistributedAlgorithm):
         """
         # Retrieve existing paths for the message
         existing_paths = self.messages[message_id]["paths"]
-    
-        # Prepare function to exclude source and sender
-        def exclude_source_dest(path: Tuple[int]) -> List[int]:
-            return list(path[1:])  # Exclude the first element (source) and keep the rest
 
         # Compare new path with all existing paths
         disjoint_count = 1
         for existing_path in existing_paths:
-            if self.are_disjoint(exclude_source_dest(new_path), exclude_source_dest(existing_path)):
+            if self.are_disjoint(existing_path[1:], new_path[1:]):
                 disjoint_count += 1
 
         # Stop early if we already have f+1 disjoint paths

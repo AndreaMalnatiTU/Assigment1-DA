@@ -7,16 +7,17 @@ from ipv8.configuration import ConfigBuilder, Strategy, WalkerDefinition, defaul
 from ipv8.util import create_event_with_signals
 from ipv8_service import IPv8
 
-def load_algorithm(alg_name: str, location = 'cs4545'):
+def load_algorithm(alg_name: str, location='cs4545'):
     try:
         mod = importlib.import_module(f'{location}.implementation')
-        return getattr(mod, 'get_algorithm')(alg_name)
+        algorithm = getattr(mod, 'get_algorithm')(alg_name)
+        return algorithm
     except ModuleNotFoundError as e:
         print(f'No external algorithms found in {location}')
         raise e
 
 
-async def start_communities(node_id, connections, algorithm, use_localhost=True) -> None:
+async def start_communities(node_id, connections, algorithm, use_localhost=True, byzantine_nodes=None) -> None:
     event = create_event_with_signals()
     base_port = 9090
     connections_updated = [(x, base_port + x) for x in connections]
@@ -36,7 +37,7 @@ async def start_communities(node_id, connections, algorithm, use_localhost=True)
         #                                              'dns_addresses': []})],
         [],
         [],
-        {},
+        {"byzantine_nodes": byzantine_nodes},
         [("started", node_id, connections_updated, event, use_localhost)],
     )
     ipv8_instance = IPv8(
@@ -61,10 +62,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     node_id = args.node_id
 
-    # alg = get_algorithm(args.algorithm)
-    alg = load_algorithm(args.algorithm, location=args.location)
     with open(args.topology, "r") as f:
         topology = yaml.safe_load(f)
-        connections = topology[node_id]
+        connections = topology["connections"][node_id]
+        byzantine_nodes = topology.get("byzantine_nodes", [])  # Ottieni i nodi bizantini
 
-        run(start_communities(node_id, connections, alg, not args.docker))
+    # Carica l'algoritmo e configura i nodi bizantini
+    alg = load_algorithm(args.algorithm, location=args.location)
+
+    # Avvia le comunità
+    run(start_communities(node_id, connections, alg, not args.docker, byzantine_nodes))

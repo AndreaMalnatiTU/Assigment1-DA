@@ -39,12 +39,14 @@ def prepare_compose_file(num_nodes, topology_file, algorithm, template_file, loc
         if Path(topology_file).exists():
             print(f"Loading existing topology from {topology_file}")
             with open(topology_file, 'r') as topo_file:
-                connections = yaml.safe_load(topo_file)
+                topology = yaml.safe_load(topo_file)
+                connections = topology.get("connections", {})
+                byzantine_nodes = topology.get("byzantine_nodes", [])
         else:
-            # Generate a ring topology
             print("Generating a ring topology")
             for i in range(num_nodes):
                 connections[i] = [(i + 1) % num_nodes, (i - 1) % num_nodes]
+            byzantine_nodes = []
 
         # Generate the nodes
         for i in range(num_nodes):
@@ -61,10 +63,12 @@ def prepare_compose_file(num_nodes, topology_file, algorithm, template_file, loc
 
         with open('docker-compose.yml', 'w') as f2:
             yaml.safe_dump(content, f2)
+            print(f'Output written to docker-compose.yml {content}')
             print(f'Output written to docker-compose.yml')
 
         with open(topology_file, 'w') as f3:
-            yaml.safe_dump(connections, f3)
+            yaml.safe_dump({"connections": connections, "byzantine_nodes": byzantine_nodes}, f3)
+            print(f'Output {connections} written to {byzantine_nodes}')
             print(f'Output written to {topology_file}')
 
 
